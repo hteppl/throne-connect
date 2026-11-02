@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -98,6 +99,9 @@ func TestInitConfigErrors(t *testing.T) {
 		t.Fatal("expected a stat error")
 	}
 
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop writes here")
+	}
 	ro := filepath.Join(t.TempDir(), "ro")
 	os.Mkdir(ro, 0o500)
 	t.Cleanup(func() { os.Chmod(ro, 0o700) })

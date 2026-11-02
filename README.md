@@ -2,6 +2,8 @@
 
 A failover VPN node for [Throne](https://github.com/throneproj/Throne) (Windows and Linux).
 
+![throne-connect TUI](.github/assets/demo.gif)
+
 throne-connect takes every xray profile (VLESS/VMess/Trojan/…) from Throne's database and keeps
 them all up in a single xray-core process. It health-checks the servers continuously and exposes
 one local SOCKS5 port that always leads to a working server. Throne connects to that port as an

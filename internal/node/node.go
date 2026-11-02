@@ -115,7 +115,8 @@ func (n *Node) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); n.runner.Run(runCtx) }()
-	defer wg.Wait()
+	// Stop xray before waiting for it, or an early error return would hang.
+	defer func() { cancel(); wg.Wait() }()
 
 	if err := n.waitXray(runCtx); err != nil {
 		return err

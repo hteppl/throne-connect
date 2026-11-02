@@ -40,6 +40,9 @@ Usage:
   throne-connect run             run the node without the TUI (services, autostart)
   throne-connect status          show the state of the running node
   throne-connect switch <N|name> switch to a server manually
+  throne-connect disable <N|name>
+                                 stop checking and using a server (kept across restarts)
+  throne-connect enable <N|name> use a disabled server again
   throne-connect list            list servers found in throne.db
   throne-connect init            create a config file
   throne-connect version
@@ -117,6 +120,11 @@ func main() {
 			exit(errors.New("specify a server: its number from `status` or part of its name"))
 		}
 		exit(switchTo(cfg, fset.Arg(0)))
+	case "disable", "enable":
+		if fset.NArg() != 1 {
+			exit(errors.New("specify a server: its number from `status` or part of its name"))
+		}
+		exit(setDisabled(cfg, fset.Arg(0), cmd == "disable"))
 	default:
 		fset.Usage()
 		os.Exit(2)
@@ -296,7 +304,9 @@ func status(cfg config.Config) error {
 		if s.Active {
 			mark = "▶"
 		}
-		if !s.Healthy {
+		if s.Disabled {
+			ping = "off"
+		} else if !s.Healthy {
 			ping = "✗"
 		} else {
 			ping = fmt.Sprintf("%d ms", s.LastMs)
@@ -321,5 +331,24 @@ func switchTo(cfg config.Config, target string) error {
 		return err
 	}
 	fmt.Println("active server:", active)
+	return nil
+}
+
+func setDisabled(cfg config.Config, target string, off bool) error {
+	c, err := apiClient(cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	name, err := c.SetDisabled(ctx, target, off)
+	if err != nil {
+		return err
+	}
+	if off {
+		fmt.Println("disabled:", name)
+	} else {
+		fmt.Println("enabled:", name)
+	}
 	return nil
 }

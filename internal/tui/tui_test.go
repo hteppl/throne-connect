@@ -22,6 +22,8 @@ type fakeClient struct {
 	switched  string
 	statusErr error
 	switchErr error
+	toggleErr error
+	toggled   []string // "+key" for enable, "-key" for disable
 	logsErr   error
 	lines     []logbuf.Line
 	logNext   uint64
@@ -36,6 +38,24 @@ func (f *fakeClient) Switch(_ context.Context, target string) (string, error) {
 	for _, s := range f.st.Servers {
 		if s.Key == target {
 			f.switched = target
+			return s.Name, nil
+		}
+	}
+	return "", errors.New("not found")
+}
+
+func (f *fakeClient) SetDisabled(_ context.Context, target string, off bool) (string, error) {
+	if f.toggleErr != nil {
+		return "", f.toggleErr
+	}
+	for i, s := range f.st.Servers {
+		if s.Key == target {
+			f.st.Servers[i].Disabled = off
+			if off {
+				f.toggled = append(f.toggled, "-"+target)
+			} else {
+				f.toggled = append(f.toggled, "+"+target)
+			}
 			return s.Name, nil
 		}
 	}
@@ -76,7 +96,7 @@ func send(t *testing.T, m tea.Model, msgs ...tea.Msg) tea.Model {
 		if cmd != nil {
 			if out := cmd(); out != nil {
 				switch out.(type) {
-				case pollMsg, switchedMsg:
+				case pollMsg, switchedMsg, toggledMsg:
 					m = send(t, m, out)
 				}
 			}
@@ -571,5 +591,57 @@ func TestPingStyle(t *testing.T) {
 		if got := pingStyle(ms); got.GetForeground() != want.GetForeground() {
 			t.Errorf("pingStyle(%d) = %v", ms, got.GetForeground())
 		}
+	}
+}
+
+func TestToggleDisabled(t *testing.T) {
+	c := &fakeClient{st: fakeStatus(5)}
+	var m tea.Model = newModel(c, Options{Source: "test"})
+	d := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")}
+	m = send(t, m, tea.WindowSizeMsg{Width: 100, Height: 30}, poll(c, 0)())
+
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyDown}, d)
+	if !reflect.DeepEqual(c.toggled, []string{"-k4"}) {
+		t.Fatalf("toggled %v", c.toggled)
+	}
+	mm := m.(model)
+	if !strings.Contains(mm.msg, "disabled") || mm.msgErr || mm.switching != "" {
+		t.Fatalf("msg %q err %v", mm.msg, mm.msgErr)
+	}
+	v := ansi.Strip(checkView(t, m, 100, 30))
+	if !strings.Contains(v, "4/4 servers alive, 1 disabled") || !strings.Contains(v, "○  4") {
+		t.Fatalf("disabled server not shown:\n%s", v)
+	}
+
+	// Enter on a disabled server does not switch.
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if c.switched != "" || !m.(model).msgErr {
+		t.Fatal("switched to a disabled server")
+	}
+
+	m = send(t, m, d)
+	if !reflect.DeepEqual(c.toggled, []string{"-k4", "+k4"}) || !strings.HasSuffix(m.(model).msg, "enabled") {
+		t.Fatalf("toggled %v, msg %q", c.toggled, m.(model).msg)
+	}
+
+	c.toggleErr = errors.New("srv 4 is the only enabled server")
+	m = send(t, m, d)
+	if mm := m.(model); !mm.msgErr || mm.msg != c.toggleErr.Error() {
+		t.Fatalf("msg %q", mm.msg)
+	}
+
+	// Busy, or the node is gone.
+	mm = m.(model)
+	mm.switching = "x"
+	if _, cmd := mm.toggleSelected(mm.rows(), 0); cmd != nil {
+		t.Fatal("toggle while busy")
+	}
+	mm.switching, mm.nodeDone = "", true
+	if _, cmd := mm.toggleSelected(mm.rows(), 0); cmd != nil {
+		t.Fatal("toggle with the node stopped")
+	}
+	mm.nodeDone, mm.st.Servers = false, nil
+	if _, cmd := mm.toggleSelected(nil, 0); cmd != nil {
+		t.Fatal("toggle with no rows")
 	}
 }

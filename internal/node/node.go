@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -37,24 +38,31 @@ type Node struct {
 	failovers   int
 	lastSwitch  string
 	startedAt   time.Time
+	disabled    map[string]bool // keys of servers turned off by the user, saved in state.json
 
-	active   atomic.Pointer[backend]
-	switchCh chan switchReq
+	active atomic.Pointer[backend]
+	reqCh  chan request
 }
 
-type switchReq struct {
-	target string
-	reply  chan error
+// request is a manual action (switch, enable, disable) run by the Run loop, so it
+// never races with health checks and failovers.
+type request struct {
+	run   func(context.Context) error
+	reply chan error
 }
 
 type state struct {
 	ActiveKey string          `json:"active_key"`
 	Servers   []source.Server `json:"servers"`
+	Disabled  []string        `json:"disabled,omitempty"`
 }
 
 // New creates a node. logs, if not nil, is served by the API for the TUI.
 func New(cfg config.Config, runner *xray.Runner, log *slog.Logger, logs *logbuf.Buffer) *Node {
-	return &Node{cfg: cfg, runner: runner, log: log, logs: logs, switchCh: make(chan switchReq), startedAt: time.Now()}
+	return &Node{
+		cfg: cfg, runner: runner, log: log, logs: logs,
+		disabled: map[string]bool{}, reqCh: make(chan request), startedAt: time.Now(),
+	}
 }
 
 func (n *Node) statePath() string { return filepath.Join(n.cfg.DataDir, "state.json") }
@@ -67,8 +75,9 @@ func (n *Node) loadState() state {
 	return st
 }
 
-// saveState remembers the active server and the server list, so a restart
-// resumes on the same server and still works if throne.db is unreadable.
+// saveState remembers the active server, the server list and the disabled
+// servers, so a restart resumes on the same server and still works if
+// throne.db is unreadable.
 func (n *Node) saveState(servers []source.Server) {
 	st := n.loadState()
 	if b := n.active.Load(); b != nil {
@@ -77,6 +86,9 @@ func (n *Node) saveState(servers []source.Server) {
 	if servers != nil {
 		st.Servers = servers
 	}
+	n.mu.Lock()
+	st.Disabled = slices.Sorted(maps.Keys(n.disabled))
+	n.mu.Unlock()
 	data, _ := json.MarshalIndent(st, "", "  ")
 	tmp := n.statePath() + ".new"
 	if os.WriteFile(tmp, data, 0o600) == nil {
@@ -94,6 +106,11 @@ func (n *Node) Run(ctx context.Context) error {
 		return err
 	}
 	st := n.loadState()
+	n.mu.Lock()
+	for _, k := range st.Disabled {
+		n.disabled[k] = true
+	}
+	n.mu.Unlock()
 
 	servers, err := n.loadServers()
 	if err != nil || len(servers) == 0 {
@@ -124,9 +141,9 @@ func (n *Node) Run(ctx context.Context) error {
 
 	// Start on the last used server right away so clients work during the first scan.
 	n.mu.Lock()
-	first := n.backends[0]
+	first := n.firstEnabled()
 	for _, b := range n.backends {
-		if b.srv.Key == st.ActiveKey {
+		if b.srv.Key == st.ActiveKey && !b.disabled {
 			first = b
 		}
 	}
@@ -179,8 +196,8 @@ func (n *Node) Run(ctx context.Context) error {
 			n.rebalance()
 		case <-reload.C:
 			n.reload(runCtx)
-		case req := <-n.switchCh:
-			req.reply <- n.manualSwitch(runCtx, req.target)
+		case req := <-n.reqCh:
+			req.reply <- req.run(runCtx)
 		}
 	}
 }
@@ -229,7 +246,7 @@ func (n *Node) apply(servers []source.Server, initial bool) error {
 	n.backends = make([]*backend, len(servers))
 	var newActive *backend
 	for i, s := range servers {
-		b := &backend{srv: s, port: n.cfg.BasePort + i, conns: map[net.Conn]net.Conn{}}
+		b := &backend{srv: s, port: n.cfg.BasePort + i, conns: map[net.Conn]net.Conn{}, disabled: n.disabled[s.Key]}
 		if o := old[s.Key]; o != nil {
 			b.hist, b.fails, b.lastOK, b.okTotal, b.errTotal = o.hist, o.fails, o.lastOK, o.okTotal, o.errTotal
 			b.dials = o.dialCount()
@@ -239,10 +256,18 @@ func (n *Node) apply(servers []source.Server, initial bool) error {
 		}
 		n.backends[i] = b
 	}
+	if n.firstEnabled().disabled {
+		// The new list holds only disabled servers. Use them anyway rather than
+		// leave Throne without a proxy; the saved choice is kept for later lists.
+		n.log.Warn("every server is disabled, using them anyway", "servers", len(n.backends))
+		for _, b := range n.backends {
+			b.disabled = false
+		}
+	}
 	n.fingerprint = source.Fingerprint(servers)
 	if !initial {
-		if newActive == nil {
-			newActive = n.backends[0]
+		if newActive == nil || newActive.disabled {
+			newActive = n.firstEnabled()
 			n.pinned = false
 		}
 		n.active.Store(newActive)
@@ -293,10 +318,26 @@ func (n *Node) probe(ctx context.Context, b *backend) result {
 	return r
 }
 
-// scan checks every server in parallel.
+// firstEnabled returns the first server that is not disabled, or the first one
+// if all are. Callers must hold n.mu, and there must be at least one server.
+func (n *Node) firstEnabled() *backend {
+	for _, b := range n.backends {
+		if !b.disabled {
+			return b
+		}
+	}
+	return n.backends[0]
+}
+
+// scan checks every enabled server in parallel.
 func (n *Node) scan(ctx context.Context) {
 	n.mu.Lock()
-	list := slices.Clone(n.backends)
+	var list []*backend
+	for _, b := range n.backends {
+		if !b.disabled {
+			list = append(list, b)
+		}
+	}
 	n.mu.Unlock()
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
@@ -337,12 +378,12 @@ func (n *Node) checkActive(ctx context.Context) {
 	}
 }
 
-// candidates returns servers whose last check passed, best first.
+// candidates returns enabled servers whose last check passed, best first.
 // Callers must hold n.mu.
 func (n *Node) candidates(exclude *backend) []*backend {
 	var out []*backend
 	for _, b := range n.backends {
-		if b != exclude && b.healthy() {
+		if b != exclude && !b.disabled && b.healthy() {
 			out = append(out, b)
 		}
 	}
@@ -359,9 +400,11 @@ func (n *Node) candidates(exclude *backend) []*backend {
 	return out
 }
 
-// failover moves off `from`. Candidates are re-checked right before switching so
-// we never jump to a server that died since the last scan.
-func (n *Node) failover(ctx context.Context, from *backend, reason string) {
+// pickHealthy finds the best working server other than `from`. Candidates are
+// re-checked first so we never jump to a server that died since the last scan;
+// if none of the top three passes, every server is scanned again. It returns
+// nil if nothing works.
+func (n *Node) pickHealthy(ctx context.Context, from *backend) *backend {
 	n.mu.Lock()
 	cands := n.candidates(from)
 	n.mu.Unlock()
@@ -370,21 +413,28 @@ func (n *Node) failover(ctx context.Context, from *backend, reason string) {
 			break
 		}
 		if n.probe(ctx, c).ok {
-			n.switchTo(c, "failure: "+reason, true)
-			return
+			return c
 		}
 	}
-
 	n.scan(ctx)
 	n.mu.Lock()
-	cands = n.candidates(from)
+	defer n.mu.Unlock()
+	if cands = n.candidates(from); len(cands) > 0 {
+		return cands[0]
+	}
+	return nil
+}
+
+// failover moves off `from` to the best working server.
+func (n *Node) failover(ctx context.Context, from *backend, reason string) {
+	if c := n.pickHealthy(ctx, from); c != nil {
+		n.switchTo(c, "failure: "+reason, true)
+		return
+	}
+	n.mu.Lock()
 	recovered := from.healthy()
 	wasDegraded := n.degraded
 	n.mu.Unlock()
-	if len(cands) > 0 {
-		n.switchTo(cands[0], "failure: "+reason, true)
-		return
-	}
 	if recovered {
 		return
 	}
@@ -449,6 +499,12 @@ func (n *Node) manualSwitch(ctx context.Context, target string) error {
 	if b == nil {
 		return fmt.Errorf("server %q not found", target)
 	}
+	n.mu.Lock()
+	off := b.disabled
+	n.mu.Unlock()
+	if off {
+		return fmt.Errorf("%s is disabled, enable it first", b.srv.Name)
+	}
 	if r := n.probe(ctx, b); !r.ok {
 		return fmt.Errorf("%s is not responding: %s", b.srv.Name, r.err)
 	}
@@ -459,16 +515,79 @@ func (n *Node) manualSwitch(ctx context.Context, target string) error {
 	return nil
 }
 
+// setDisabled turns a server off or back on. A disabled server is not checked
+// and never used. Disabling the active server first moves to the best working
+// one; if nothing else works, the server stays enabled. Enabling checks the
+// server right away. It returns the server's name.
+func (n *Node) setDisabled(ctx context.Context, target string, off bool) (string, error) {
+	n.mu.Lock()
+	b := n.find(target)
+	if b == nil {
+		n.mu.Unlock()
+		return "", fmt.Errorf("server %q not found", target)
+	}
+	name := b.srv.Name
+	if b.disabled == off {
+		n.mu.Unlock()
+		return name, nil
+	}
+	if !off {
+		b.disabled = false
+		delete(n.disabled, b.srv.Key)
+		n.mu.Unlock()
+		r := n.probe(ctx, b)
+		n.log.Info("server enabled", "server", name, "ok", r.ok)
+		n.saveState(nil)
+		return name, nil
+	}
+
+	enabled := 0
+	for _, x := range n.backends {
+		if !x.disabled {
+			enabled++
+		}
+	}
+	if enabled <= 1 {
+		n.mu.Unlock()
+		return "", fmt.Errorf("%s is the only enabled server", name)
+	}
+	b.disabled = true
+	n.disabled[b.srv.Key] = true
+	n.mu.Unlock()
+
+	if n.active.Load() == b {
+		next := n.pickHealthy(ctx, b)
+		if next == nil {
+			n.mu.Lock()
+			b.disabled = false
+			delete(n.disabled, b.srv.Key)
+			n.mu.Unlock()
+			return "", fmt.Errorf("%s is active and no other server responds, so it stays enabled", name)
+		}
+		n.switchTo(next, "disabled "+name, true)
+	}
+	n.log.Info("server disabled", "server", name)
+	n.saveState(nil)
+	return name, nil
+}
+
 func (n *Node) logSummary() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	alive := 0
+	alive, off := 0, 0
 	for _, b := range n.backends {
-		if b.healthy() {
+		switch {
+		case b.disabled:
+			off++
+		case b.healthy():
 			alive++
 		}
 	}
-	n.log.Info("server scan", "alive", alive, "total", len(n.backends), "active", nameOf(n.active.Load()))
+	args := []any{"alive", alive, "total", len(n.backends), "active", nameOf(n.active.Load())}
+	if off > 0 {
+		args = append(args, "disabled", off)
+	}
+	n.log.Info("server scan", args...)
 }
 
 func nameOf(b *backend) string {

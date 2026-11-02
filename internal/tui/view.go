@@ -87,15 +87,21 @@ func (m model) viewHeader() []string {
 	default:
 		badge = greenStyle.Bold(true).Render("● OK")
 	}
-	alive := 0
+	alive, off := 0, 0
 	for _, s := range m.st.Servers {
-		if s.Healthy {
+		switch {
+		case s.Disabled:
+			off++
+		case s.Healthy:
 			alive++
 		}
 	}
 	title := titleStyle.Render("throne-connect") + "  " + badge
 	if m.loaded {
-		title += dimStyle.Render(fmt.Sprintf("  %d/%d servers alive", alive, len(m.st.Servers)))
+		title += dimStyle.Render(fmt.Sprintf("  %d/%d servers alive", alive, len(m.st.Servers)-off))
+		if off > 0 {
+			title += dimStyle.Render(fmt.Sprintf(", %d disabled", off))
+		}
 	}
 	title += dimStyle.Render("  ·  " + m.opts.Source)
 
@@ -239,6 +245,12 @@ func (m model) emptyTableText() string {
 func rowCells(s node.ServerStatus) ([]string, []*lipgloss.Style) {
 	mark, ping, score := " ", "", "-"
 	styles := make([]*lipgloss.Style, 8)
+	if s.Disabled && !s.Active {
+		for i := range styles {
+			styles[i] = &dimStyle
+		}
+		return []string{"○", strconv.Itoa(s.Index), s.Name, "off", score, fmt.Sprintf("%d/%d", s.OK, s.Errors), strconv.FormatInt(s.Conns, 10), "disabled"}, styles
+	}
 	if s.Active {
 		mark = "▶"
 		styles[0] = &greenStyle
@@ -324,7 +336,7 @@ func (m model) viewMessage() string {
 
 func (m model) viewKeys() string {
 	keys := [][2]string{
-		{"↑↓", "select"}, {"enter", "switch"}, {"a", "active"}, {"/", "filter"},
+		{"↑↓", "select"}, {"enter", "switch"}, {"d", "disable"}, {"a", "active"}, {"/", "filter"},
 		{"s", "sort"}, {"l", "log"}, {"?", "help"}, {"q", "quit"},
 	}
 	if m.showHelp {
@@ -344,6 +356,7 @@ func helpLines() []string {
 		key("↑ ↓  k j", "move the selection (mouse wheel and click work too)"),
 		key("PgUp PgDn", "page up / down;  Home End (g G) jump to the first / last server"),
 		key("Enter  Space", "switch to the selected server; it is checked first, then pinned"),
+		key("d", "disable / enable the selected server: a disabled one is not checked or used"),
 		key("a", "jump to the active server"),
 		key("/", "filter by name or group;  Esc clears the filter"),
 		key("s", "sort by #, score or name"),
@@ -352,7 +365,8 @@ func helpLines() []string {
 		key("q  Ctrl+C", "quit (for an embedded node: stop it, after confirmation)"),
 		"",
 		boldStyle.Render(" Columns"),
-		key("PING", "latency of the last successful check; ✗ = the last check failed, … = not checked yet"),
+		key("PING", "latency of the last successful check; ✗ = the last check failed, … = not checked yet,"),
+		key("", "off = disabled (○)"),
 		key("SCORE", "median latency + 1000 per failure in the last 10 checks; lower is better"),
 		key("OK/ERR", "checks passed / failed since start"),
 		key("CONNS", "connections opened to this server since start"),

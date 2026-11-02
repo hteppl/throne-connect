@@ -18,6 +18,7 @@ import (
 type Client interface {
 	Status(ctx context.Context) (node.Status, error)
 	Switch(ctx context.Context, target string) (string, error)
+	SetDisabled(ctx context.Context, target string, off bool) (string, error)
 	Logs(ctx context.Context, after uint64) ([]logbuf.Line, uint64, error)
 }
 
@@ -73,6 +74,12 @@ type switchedMsg struct {
 	err    error
 }
 
+type toggledMsg struct {
+	name string
+	off  bool
+	err  error
+}
+
 type nodeExitedMsg struct{ err error }
 
 func tick() tea.Cmd {
@@ -102,5 +109,15 @@ func switchCmd(c Client, key, name string) tea.Cmd {
 		defer cancel()
 		active, err := c.Switch(ctx, key)
 		return switchedMsg{name: name, active: active, err: err}
+	}
+}
+
+func toggleCmd(c Client, key, name string, off bool) tea.Cmd {
+	return func() tea.Msg {
+		// Disabling the active server first finds and checks another one.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		_, err := c.SetDisabled(ctx, key, off)
+		return toggledMsg{name: name, off: off, err: err}
 	}
 }

@@ -14,20 +14,21 @@ import (
 )
 
 type ServerStatus struct {
-	Index   int     `json:"index"`
-	Name    string  `json:"name"`
-	Group   string  `json:"group"`
-	Key     string  `json:"key"`
-	Port    int     `json:"port"`
-	Active  bool    `json:"active"`
-	Healthy bool    `json:"healthy"`
-	LastMs  int     `json:"last_ms"`
-	Score   float64 `json:"score"`
-	Fails   int     `json:"consecutive_fails"`
-	OK      int     `json:"ok_total"`
-	Errors  int     `json:"err_total"`
-	LastErr string  `json:"last_err,omitempty"`
-	Conns   int64   `json:"conns"` // total connections opened to this server
+	Index    int     `json:"index"`
+	Name     string  `json:"name"`
+	Group    string  `json:"group"`
+	Key      string  `json:"key"`
+	Port     int     `json:"port"`
+	Active   bool    `json:"active"`
+	Disabled bool    `json:"disabled,omitempty"`
+	Healthy  bool    `json:"healthy"`
+	LastMs   int     `json:"last_ms"`
+	Score    float64 `json:"score"`
+	Fails    int     `json:"consecutive_fails"`
+	OK       int     `json:"ok_total"`
+	Errors   int     `json:"err_total"`
+	LastErr  string  `json:"last_err,omitempty"`
+	Conns    int64   `json:"conns"` // total connections opened to this server
 }
 
 type Status struct {
@@ -67,10 +68,10 @@ func (n *Node) Status(context.Context) (Status, error) {
 	for i, b := range n.backends {
 		s := ServerStatus{
 			Index: i + 1, Name: b.srv.Name, Group: b.srv.Group, Key: b.srv.Key, Port: b.port,
-			Active: b == a, Healthy: b.healthy(), LastMs: b.lastMs(), Fails: b.fails,
-			OK: b.okTotal, Errors: b.errTotal, Conns: b.dialCount(),
+			Active: b == a, Disabled: b.disabled, Healthy: b.healthy() && !b.disabled,
+			LastMs: b.lastMs(), Fails: b.fails, OK: b.okTotal, Errors: b.errTotal, Conns: b.dialCount(),
 		}
-		if sc := b.score(); sc < 1e9 {
+		if sc := b.score(); sc < 1e9 && !b.disabled {
 			s.Score = sc
 		} else {
 			s.Score = -1
@@ -86,16 +87,34 @@ func (n *Node) Status(context.Context) (Status, error) {
 // Switch moves to the given server (see find) and pins it. It returns the name
 // of the new active server.
 func (n *Node) Switch(ctx context.Context, target string) (string, error) {
-	req := switchReq{target: target, reply: make(chan error, 1)}
-	select {
-	case n.switchCh <- req:
-	case <-ctx.Done():
-		return "", errors.New("the node is busy, try again")
-	}
-	if err := <-req.reply; err != nil {
+	err := n.do(ctx, func(ctx context.Context) error { return n.manualSwitch(ctx, target) })
+	if err != nil {
 		return "", err
 	}
 	return nameOf(n.active.Load()), nil
+}
+
+// SetDisabled turns the given server (see find) off or back on. A disabled
+// server is not checked and never used; the choice survives restarts. It
+// returns the server's name.
+func (n *Node) SetDisabled(ctx context.Context, target string, off bool) (string, error) {
+	var name string
+	err := n.do(ctx, func(ctx context.Context) (err error) {
+		name, err = n.setDisabled(ctx, target, off)
+		return err
+	})
+	return name, err
+}
+
+// do runs fn in the Run loop.
+func (n *Node) do(ctx context.Context, fn func(context.Context) error) error {
+	req := request{run: fn, reply: make(chan error, 1)}
+	select {
+	case n.reqCh <- req:
+	case <-ctx.Done():
+		return errors.New("the node is busy, try again")
+	}
+	return <-req.reply
 }
 
 // Logs returns log lines newer than after and the value to pass next time.
@@ -153,6 +172,21 @@ func (n *Node) startAPI(ctx context.Context) error {
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"active": active})
 	})
+	for path, off := range map[string]bool{"POST /disable": true, "POST /enable": false} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			target := r.URL.Query().Get("server")
+			if target == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing ?server="})
+				return
+			}
+			name, err := n.SetDisabled(r.Context(), target, off)
+			if err != nil {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"server": name, "disabled": off})
+		})
+	}
 
 	ln, err := net.Listen("tcp", n.cfg.APIListen)
 	if err != nil {

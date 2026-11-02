@@ -14,7 +14,7 @@ import (
 )
 
 // Client talks to a running node over its HTTP API. It has the same Status,
-// Switch and Logs methods as Node.
+// Switch, SetDisabled and Logs methods as Node.
 type Client struct {
 	base string
 	http http.Client
@@ -60,6 +60,18 @@ func (c *Client) Switch(ctx context.Context, target string) (string, error) {
 		return "", err
 	}
 	return m["active"], nil
+}
+
+func (c *Client) SetDisabled(ctx context.Context, target string, off bool) (string, error) {
+	path := "/enable"
+	if off {
+		path = "/disable"
+	}
+	var m struct{ Server string }
+	if err := c.do(ctx, http.MethodPost, path+"?server="+url.QueryEscape(target), &m); err != nil {
+		return "", err
+	}
+	return m.Server, nil
 }
 
 func (c *Client) Logs(ctx context.Context, after uint64) ([]logbuf.Line, uint64, error) {

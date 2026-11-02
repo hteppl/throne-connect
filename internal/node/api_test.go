@@ -100,15 +100,15 @@ func TestFind(t *testing.T) {
 	}
 }
 
-// serveSwitches handles Switch requests the way the Run loop does.
+// serveSwitches handles manual requests the way the Run loop does.
 func serveSwitches(ctx context.Context, n *Node) {
 	go func() {
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case req := <-n.switchCh:
-				req.reply <- n.manualSwitch(ctx, req.target)
+			case req := <-n.reqCh:
+				req.reply <- req.run(ctx)
 			}
 		}
 	}()

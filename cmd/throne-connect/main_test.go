@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strings"
@@ -154,6 +155,18 @@ func fakeAPI(t *testing.T, st node.Status) (config.Config, *[]string) {
 		}
 		json.NewEncoder(w).Encode(map[string]string{"active": "Berlin"})
 	})
+	for path, op := range map[string]string{"POST /disable": "-", "POST /enable": "+"} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+			target := r.URL.Query().Get("server")
+			switches = append(switches, op+target)
+			if target == "bad" {
+				w.WriteHeader(http.StatusConflict)
+				json.NewEncoder(w).Encode(map[string]string{"error": "server \"bad\" not found"})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{"server": "Berlin"})
+		})
+	}
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	cfg := config.Default()
@@ -168,6 +181,7 @@ func sampleStatus() node.Status {
 		Servers: []node.ServerStatus{
 			{Index: 1, Name: "Amsterdam", Active: true, Healthy: true, LastMs: 42, Score: 45, OK: 5, Errors: 1, Conns: 3},
 			{Index: 2, Name: "Berlin", Score: -1, Errors: 4, LastErr: "timeout"},
+			{Index: 3, Name: "Paris", Disabled: true, Score: -1},
 		},
 	}
 }
@@ -181,7 +195,7 @@ func TestStatus(t *testing.T) {
 	}
 	for _, want := range []string{
 		"State:       OK", "Active:      Amsterdam, since 2026-01-01 10:00:00", "socks5://127.0.0.1:10808",
-		"switches: 2, xray restarts: 1", "▶  1  Amsterdam  42 ms  45", "5/1", "2  Berlin     ✗      -", "timeout",
+		"switches: 2, xray restarts: 1", "▶  1  Amsterdam  42 ms  45", "5/1", "2  Berlin     ✗      -", "timeout", "3  Paris      off",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
@@ -222,6 +236,23 @@ func TestStatusAndSwitchViaMain(t *testing.T) {
 	}
 }
 
+func TestDisableEnableViaMain(t *testing.T) {
+	cfg, calls := fakeAPI(t, sampleStatus())
+	path := writeConfig(t, cfg)
+	if out := runMain(t, "disable", "-c", path, "2"); out != "disabled: Berlin\n" {
+		t.Fatalf("disable out %q", out)
+	}
+	if out := runMain(t, "enable", "-c", path, "Berlin"); out != "enabled: Berlin\n" {
+		t.Fatalf("enable out %q", out)
+	}
+	if !reflect.DeepEqual(*calls, []string{"-2", "+Berlin"}) {
+		t.Fatalf("calls %v", *calls)
+	}
+	if err := setDisabled(cfg, "bad", true); err == nil || err.Error() != `server "bad" not found` {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestSwitchError(t *testing.T) {
 	cfg, _ := fakeAPI(t, sampleStatus())
 	if err := switchTo(cfg, "bad"); err == nil || err.Error() != `server "bad" not found` {
@@ -232,7 +263,7 @@ func TestSwitchError(t *testing.T) {
 func TestAPIDisabled(t *testing.T) {
 	cfg := config.Default()
 	cfg.APIListen = ""
-	for _, err := range []error{status(cfg), switchTo(cfg, "1")} {
+	for _, err := range []error{status(cfg), switchTo(cfg, "1"), setDisabled(cfg, "1", true)} {
 		if err == nil || !strings.Contains(err.Error(), "api_listen is disabled") {
 			t.Fatalf("err = %v", err)
 		}
@@ -324,6 +355,7 @@ func TestMainExits(t *testing.T) {
 		{"unknown command", []string{"frobnicate", "-c", path}, 2, "Usage:"},
 		{"bad config", []string{"status", "-c", bad}, 1, "error: config:"},
 		{"switch without target", []string{"switch", "-c", path}, 1, "specify a server"},
+		{"disable without target", []string{"disable", "-c", path}, 1, "specify a server"},
 		{"init existing", []string{"init", "-c", path}, 1, "already exists"},
 		{"list error", []string{"list", "-c", writeConfig(t, withDB(cfg, "/nonexistent/throne.db"))}, 1, "throne db"},
 		{"run error", []string{"run", "-c", writeConfig(t, withXray(cfg, "/nonexistent/xray"))}, 1, "xray_path"},

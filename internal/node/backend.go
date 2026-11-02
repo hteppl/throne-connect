@@ -35,6 +35,7 @@ type backend struct {
 	lastOK   time.Time
 	okTotal  int
 	errTotal int
+	disabled bool // turned off by the user: not checked, never used
 
 	connMu sync.Mutex
 	conns  map[net.Conn]net.Conn // client -> xray, currently open

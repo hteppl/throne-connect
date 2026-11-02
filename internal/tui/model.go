@@ -44,7 +44,7 @@ type model struct {
 	showLogs  bool
 	showHelp  bool
 
-	switching   string // name of the server being switched to
+	switching   string // name of the server being switched to, enabled or disabled
 	msg         string
 	msgErr      bool
 	msgAt       time.Time
@@ -187,6 +187,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.polling = true
 		return m, poll(m.c, m.logNext)
 
+	case toggledMsg:
+		m.switching = ""
+		switch {
+		case msg.err != nil:
+			m.setMsg(msg.err.Error(), true)
+		case msg.off:
+			m.setMsg(msg.name+" disabled: it is not checked or used until you enable it (d)", false)
+		default:
+			m.setMsg(msg.name+" enabled", false)
+		}
+		m.polling = true
+		return m, poll(m.c, m.logNext)
+
 	case nodeExitedMsg:
 		m.nodeDone, m.nodeErr = true, msg.err
 		m.switching = ""
@@ -297,6 +310,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.selectActive(rows)
 	case "enter", " ":
 		return m.switchSelected(rows, cur)
+	case "d":
+		return m.toggleSelected(rows, cur)
 	case "/":
 		m.filtering = true
 	case "esc":
@@ -332,6 +347,10 @@ func (m model) switchSelected(rows []node.ServerStatus, cur int) (tea.Model, tea
 		return m, nil
 	}
 	s := rows[cur]
+	if s.Disabled {
+		m.setMsg(s.Name+" is disabled. Press d to enable it.", true)
+		return m, nil
+	}
 	if s.Active && m.st.Pinned {
 		m.setMsg(s.Name+" is already active.", false)
 		return m, nil
@@ -339,6 +358,30 @@ func (m model) switchSelected(rows []node.ServerStatus, cur int) (tea.Model, tea
 	m.switching = s.Name
 	m.setMsg("Checking "+s.Name+" and switching…", false)
 	return m, switchCmd(m.c, s.Key, s.Name)
+}
+
+func (m model) toggleSelected(rows []node.ServerStatus, cur int) (tea.Model, tea.Cmd) {
+	switch {
+	case m.nodeDone:
+		m.setMsg("The node is not running.", true)
+		return m, nil
+	case m.switching != "":
+		m.setMsg("Still busy with "+m.switching+"…", false)
+		return m, nil
+	case len(rows) == 0:
+		return m, nil
+	}
+	s := rows[cur]
+	m.switching = s.Name
+	switch {
+	case s.Disabled:
+		m.setMsg("Enabling and checking "+s.Name+"…", false)
+	case s.Active:
+		m.setMsg("Disabling "+s.Name+" and moving to another server…", false)
+	default:
+		m.setMsg("Disabling "+s.Name+"…", false)
+	}
+	return m, toggleCmd(m.c, s.Key, s.Name, !s.Disabled)
 }
 
 func (m model) quit() (tea.Model, tea.Cmd) {

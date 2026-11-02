@@ -44,6 +44,11 @@ apps → Throne (TUN) → socks5://127.0.0.1:10808 → throne-connect
 - `throne.db` is re-read every `reload_interval`. If Throne refreshed the subscription, xray is
   restarted with the new list. If the new config fails `xray -test`, the node stays on the old
   one; individual broken servers are simply skipped.
+- A server can be disabled from the TUI (`d`), the CLI or the API. A disabled server is not
+  checked, is never switched to and gets no traffic. Disabling the active server first moves to
+  the best working one (its connections are closed as on a failover); if no other server
+  responds, it stays enabled. The choice is kept by server key in `state.json`, so it survives
+  restarts and subscription refreshes. To drop servers permanently, use `exclude` in the config.
 - The last active server and the server list are saved to `state.json`. After a restart the node
   resumes on the same server and keeps working even if `throne.db` is unavailable.
 
@@ -153,6 +158,7 @@ it, `throne-connect` is the whole program in one window.
 | `↑` `↓` / `k` `j`, mouse wheel, click | select a server                                            |
 | `PgUp` `PgDn`, `Home` `End` (`g` `G`) | page, jump to the first / last                             |
 | `Enter` / `Space`                     | switch to the selected server (checked first, then pinned) |
+| `d`                                   | disable / enable the selected server                       |
 | `a`                                   | jump to the active server                                  |
 | `/`                                   | filter by name or group; `Esc` clears it                   |
 | `s`                                   | sort by #, score or name                                   |
@@ -174,12 +180,15 @@ throne-connect run              run the node without the TUI (for services)
 throne-connect status           state: active server, latencies, errors, connections
 throne-connect switch 4         switch manually (number from status or part of the name);
                                 a manual choice is kept for as long as that server works
+throne-connect disable 4        stop checking and using a server (kept across restarts)
+throne-connect enable 4         use a disabled server again (it is checked right away)
 throne-connect list             servers found in throne.db
 throne-connect init             create a config file
 -c <file>                       use another config file;  -v  verbose logging
 ```
 
 API for your own scripts: `GET http://127.0.0.1:10809/status`, `POST /switch?to=<N|name>`,
+`POST /disable?server=<N|name>`, `POST /enable?server=<N|name>`,
 `GET /logs?after=<seq>` (recent log lines, used by the TUI).
 
 ## Configuration

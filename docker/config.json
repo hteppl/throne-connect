@@ -1,0 +1,7 @@
+{
+  "throne_db": "/throne/throne.db",
+  "xray_path": "/usr/local/bin/xray",
+  "data_dir": "/data",
+  "listen": "127.0.0.1:10808",
+  "api_listen": "127.0.0.1:10809"
+}

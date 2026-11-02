@@ -1,0 +1,38 @@
+# Build artifacts
+bin/
+dist/
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# macOS
+.DS_Store
+
+# Go
+*.test
+*.out
+coverage*
+
+# Local config (may hold throne.db path / tuning; written 0600)
+throne-connect.json
+
+# Generated runtime data — xray.json holds server credentials (UUIDs/passwords)
+xray.json
+xray.json.new
+xray-test-*.json
+state.json
+state.json.new
+
+# Throne databases (real VPN profiles / credentials)
+*.db
+*.db-wal
+*.db-shm
+
+# Secrets / env
+.env
+.env.*
+*.pem
+*.key

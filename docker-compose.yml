@@ -1,0 +1,20 @@
+services:
+  throne-connect:
+    build: .
+    image: throne-connect:local
+    container_name: throne-connect
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ${THRONE_CONFIG_DIR:-~/.config/Throne/config}:/throne
+      - throne-connect-data:/data
+    healthcheck:
+      test: ["CMD", "throne-connect", "status", "-c", "/etc/throne-connect/config.json"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  throne-connect-data:

@@ -1,5 +1,11 @@
 # throne-connect
 
+[![CI](https://github.com/hteppl/throne-connect/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/hteppl/throne-connect/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/hteppl/throne-connect?sort=semver)](https://github.com/hteppl/throne-connect/releases/latest)
+[![Go version](https://img.shields.io/github/go-mod/go-version/hteppl/throne-connect)](go.mod)
+[![License: GPL-3.0](https://img.shields.io/github/license/hteppl/throne-connect)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platforms-linux%20%7C%20windows%20%7C%20macos%20%7C%20freebsd-blue)](https://github.com/hteppl/throne-connect/releases/latest)
+
 A failover VPN node for [Throne](https://github.com/throneproj/Throne) (Windows and Linux).
 
 ![throne-connect TUI](.github/assets/demo.gif)

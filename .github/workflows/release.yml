@@ -1,0 +1,43 @@
+name: Release
+
+# Push a tag like v1.2.0 (or v1.2.0-rc.1 for a pre-release) to publish archives
+# for every platform in scripts/dist.sh, plus checksums.txt.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: build archives
+        run: ./scripts/dist.sh "$GITHUB_REF_NAME"
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          files=(dist/*.tar.gz dist/*.zip dist/checksums.txt)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            flags=(--verify-tag --generate-notes --title "$TAG")
+            [[ "$TAG" == *-* ]] && flags+=(--prerelease)
+            gh release create "$TAG" "${flags[@]}" "${files[@]}"
+          fi

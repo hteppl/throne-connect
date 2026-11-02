@@ -43,10 +43,19 @@ apps → Throne (TUN) → socks5://127.0.0.1:10808 → throne-connect
 
 ## Installation
 
-### Linux
+Prebuilt archives are on the [Releases](https://github.com/hteppl/throne-connect/releases) page
+for Linux (amd64, arm64, 386, armv6, armv7, riscv64), macOS (Intel, Apple Silicon), Windows
+(amd64, arm64, 386) and FreeBSD (amd64, arm64), with `checksums.txt`. Each archive holds the
+binary and the script that downloads xray-core for that platform (`get-xray.sh` or
+`get-xray.ps1`). To build them yourself: `make dist VERSION=v1.2.3`.
+
+Releases are published by pushing a tag: `git tag v1.2.3 && git push origin v1.2.3`
+(a tag with a suffix such as `v1.2.3-rc.1` becomes a pre-release).
+
+### Linux / macOS / FreeBSD
 
 ```sh
-make build                 # or take dist/linux-amd64/throne-connect
+make build                 # or unpack a release archive into ./bin
 ./scripts/get-xray.sh bin  # download xray-core into ./bin
 ./bin/throne-connect list  # check that servers from Throne are visible
 ./bin/throne-connect       # run the node with the TUI (see below)

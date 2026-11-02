@@ -1,7 +1,9 @@
 # Downloads the latest xray-core for Windows next to throne-connect.exe (or into -Dest).
 param([string]$Dest = ".")
 $ErrorActionPreference = "Stop"
-$asset = if ([Environment]::Is64BitOperatingSystem) { "Xray-windows-64.zip" } else { "Xray-windows-32.zip" }
+$asset = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64" -or $env:PROCESSOR_ARCHITEW6432 -eq "ARM64") { "Xray-windows-arm64-v8a.zip" }
+    elseif ([Environment]::Is64BitOperatingSystem) { "Xray-windows-64.zip" }
+    else { "Xray-windows-32.zip" }
 $url = "https://github.com/XTLS/Xray-core/releases/latest/download/$asset"
 $tmp = Join-Path $env:TEMP "xray-$([guid]::NewGuid()).zip"
 $dir = Join-Path $env:TEMP "xray-$([guid]::NewGuid())"

@@ -15,7 +15,6 @@ import (
 	"github.com/xjasonlyu/tun2socks/v2/engine"
 )
 
-// bakResolv is where the original /etc/resolv.conf is parked while we override it.
 const resolvConf = "/etc/resolv.conf"
 const bakResolv = "/etc/resolv.conf.throne-connect.bak"
 
@@ -47,14 +46,13 @@ func Start(_ context.Context, opts Options, log *slog.Logger) (Tunnel, error) {
 
 	t := &linuxTunnel{opts: opts, log: log, gateway: gw, wanDev: dev}
 
-	// Keep xray's traffic to the servers off the tunnel: a dedicated table routes
-	// anything carrying the fwmark straight out of the real interface.
+	// Marked (xray) traffic to the servers takes a dedicated table out the real
+	// interface, so it never re-enters the tunnel.
 	table := strconv.Itoa(opts.Table)
 	mark := strconv.Itoa(opts.FWMark)
 	if err := ipRun(log, "route", "replace", "default", "via", gw, "dev", dev, "table", table); err != nil {
 		return nil, err
 	}
-	// Add the rule only once.
 	if !ruleExists(mark, table) {
 		if err := ipRun(log, "rule", "add", "fwmark", mark, "table", table, "priority", "100"); err != nil {
 			t.teardownRoutes()
@@ -62,7 +60,6 @@ func Start(_ context.Context, opts Options, log *slog.Logger) (Tunnel, error) {
 		}
 	}
 
-	// Start tun2socks: create the device and forward it to the node's SOCKS.
 	engine.Insert(&engine.Key{
 		Device:   "tun://" + opts.Name,
 		Proxy:    "socks5://" + opts.SocksAddr,
@@ -72,8 +69,7 @@ func Start(_ context.Context, opts Options, log *slog.Logger) (Tunnel, error) {
 	engine.Start() // fatal on failure; preflight above covers the common causes
 	t.engineUp = true
 
-	// Address the interface and point the default route at it (split default so the
-	// original default route stays in place for teardown and for the mark table).
+	// Split default (0/1 + 128/1) so the real default route survives for the mark table and teardown.
 	if err := t.setupDevice(); err != nil {
 		t.Close()
 		return nil, err
@@ -105,7 +101,6 @@ func (t *linuxTunnel) setupDevice() error {
 	if err := ipRun(t.log, "link", "set", "dev", t.opts.Name, "mtu", strconv.Itoa(t.opts.MTU), "up"); err != nil {
 		return err
 	}
-	// Keep the servers' own IPs and any extra excludes off the tunnel too.
 	for _, cidr := range t.opts.Exclude {
 		ipRun(t.log, "route", "replace", cidr, "via", t.gateway, "dev", t.wanDev)
 	}
@@ -138,7 +133,6 @@ func (t *linuxTunnel) teardownRoutes() {
 	ipQuiet("route", "flush", "table", strconv.Itoa(t.opts.Table))
 }
 
-// defaultRoute returns the gateway and interface of the current IPv4 default route.
 func defaultRoute() (gw, dev string, err error) {
 	out, err := exec.Command("ip", "-j", "route", "show", "default").Output()
 	if err != nil {

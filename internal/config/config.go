@@ -71,32 +71,23 @@ type Config struct {
 	// Where state and the generated xray config are kept. Empty means the platform default.
 	DataDir string `json:"data_dir"`
 
-	// Built-in system VPN. When enabled, throne-connect brings up a TUN device and
-	// routes all traffic through the active server itself — no external client
-	// (Throne) is needed for the tunnel. Linux only. Requires root / CAP_NET_ADMIN.
+	// Built-in system VPN: bring up a TUN and route all traffic through the active
+	// server. Linux only; requires root / CAP_NET_ADMIN.
 	TUN TUN `json:"tun"`
 }
 
 // TUN configures the built-in system tunnel (tun2socks over the node's own SOCKS).
 type TUN struct {
-	// Turn the tunnel on.
-	Enabled bool `json:"enabled"`
-	// TUN interface name.
-	Name string `json:"name"`
-	// Interface address (CIDR); a small unused range is enough.
+	Enabled bool   `json:"enabled"`
+	Name    string `json:"name"`
 	Address string `json:"address"`
-	// Interface MTU.
-	MTU int `json:"mtu"`
-	// Firewall mark set on xray's own sockets so its traffic to the VPN servers
-	// bypasses the tunnel (no loop). A policy route for this mark is installed.
+	MTU     int    `json:"mtu"`
+	// Mark set on xray's sockets so its traffic to the servers bypasses the tunnel; a policy route matches it.
 	FWMark int `json:"fwmark"`
-	// Routing table id used for the bypass policy route.
-	Table int `json:"table"`
-	// If set, point the system resolver here while the tunnel is up (so DNS goes
-	// through the VPN); the previous /etc/resolv.conf is restored on shutdown.
-	DNS string `json:"dns"`
-	// Extra destination CIDRs to keep off the tunnel (LAN/private are kept direct anyway).
-	Exclude []string `json:"exclude"`
+	Table  int `json:"table"`
+	// System resolver to use while the tunnel is up; /etc/resolv.conf is restored on shutdown.
+	DNS     string   `json:"dns"`
+	Exclude []string `json:"exclude"` // extra CIDRs kept off the tunnel
 }
 
 func Default() Config {

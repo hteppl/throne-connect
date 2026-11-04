@@ -14,10 +14,8 @@ func OutboundTag(i int) string { return fmt.Sprintf("srv-%d", i) }
 
 // BuildConfig produces an xray config where server i is reachable through a SOCKS
 // inbound on 127.0.0.1:basePort+i that routes only to that server's outbound.
-//
-// mark, when > 0, is set as SO_MARK (sockopt.mark) on every server outbound. The
-// built-in TUN uses it with a policy route so xray's own traffic to the VPN
-// servers bypasses the tunnel instead of looping back into it.
+// mark, when > 0, is set as sockopt.mark on every outbound so the built-in TUN's
+// policy route can keep xray's traffic to the servers off the tunnel.
 func BuildConfig(servers []source.Server, basePort int, dns []string, logLevel string, mark int) ([]byte, error) {
 	inbounds := make([]any, 0, len(servers))
 	outbounds := []any{map[string]any{"protocol": "freedom", "tag": "direct"}}

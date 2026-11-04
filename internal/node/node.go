@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -236,6 +237,9 @@ func socksDialAddr(listen string) string {
 }
 
 func (n *Node) tunOptions() tun.Options {
+	// Keep xray's own DNS resolvers off the tunnel, or their queries would loop
+	// back into it and no server would resolve. Merge with any user excludes.
+	exclude := append(dnsBypassCIDRs(n.cfg.DNS), n.cfg.TUN.Exclude...)
 	return tun.Options{
 		Name:      n.cfg.TUN.Name,
 		Address:   n.cfg.TUN.Address,
@@ -244,9 +248,33 @@ func (n *Node) tunOptions() tun.Options {
 		FWMark:    n.cfg.TUN.FWMark,
 		Table:     n.cfg.TUN.Table,
 		DNS:       n.cfg.TUN.DNS,
-		Exclude:   n.cfg.TUN.Exclude,
+		Exclude:   exclude,
 		LogLevel:  n.cfg.XrayLogLevel,
 	}
+}
+
+// dnsBypassCIDRs extracts the IPv4 resolver addresses from xray's DNS settings
+// (forms like "https+local://1.1.1.1/dns-query", "8.8.8.8:53", "9.9.9.9") as /32
+// routes, so the TUN keeps xray's own DNS queries off the tunnel. Hostnames and
+// IPv6 (the stack is IPv4-only) are skipped.
+func dnsBypassCIDRs(dns []string) []string {
+	var out []string
+	for _, d := range dns {
+		host := d
+		if i := strings.Index(host, "://"); i >= 0 {
+			host = host[i+3:]
+		}
+		if i := strings.IndexByte(host, '/'); i >= 0 {
+			host = host[:i]
+		}
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if ip := net.ParseIP(host); ip != nil && ip.To4() != nil {
+			out = append(out, ip.String()+"/32")
+		}
+	}
+	return out
 }
 
 // tunUp reports whether the built-in TUN is currently up.

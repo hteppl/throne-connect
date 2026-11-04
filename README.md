@@ -179,7 +179,8 @@ The TUI header shows the current `TUN on` / `TUN off` state. (Turning it on stil
 - xray's own connections to the VPN servers are tagged with a firewall mark (`fwmark`) and sent
   out through a dedicated routing table, so they bypass the tunnel instead of looping back into
   it. **No Throne `process_name xray → direct` rule is needed** — the node sets this up itself.
-- Private networks (LAN, Docker, etc.) stay direct; add more with `tun.exclude`.
+- Private networks (LAN, Docker, etc.) stay direct; add more with `tun.exclude`. xray's own DNS
+  resolvers (`dns`) are kept off the tunnel automatically, so their queries never loop into it.
 - `tun.dns` points the system resolver at the given server while the tunnel is up (so DNS goes
   through the VPN) and restores `/etc/resolv.conf` on shutdown. Leave it empty to keep the
   system's own DNS. The stack is IPv4-only.
@@ -274,7 +275,7 @@ File: `./throne-connect.json` or `~/.config/throne-connect/config.json`
 | `api_listen`          | `127.0.0.1:10809`                       | status API (`""` disables it)                          |
 | `xray_path`           | next to binary / `./bin` / PATH         | path to xray                                           |
 | `base_port`           | `21000`                                 | first internal xray port                               |
-| `dns`                 | DoH 1.1.1.1, 8.8.8.8, 77.88.8.8         | how xray resolves server addresses                     |
+| `dns`                 | DoH 1.1.1.1, 8.8.8.8, 9.9.9.9           | how xray resolves server addresses                     |
 | `test_url`            | `http://cp.cloudflare.com/generate_204` | what to fetch when checking                            |
 | `timeout`             | `5s`                                    | check timeout                                          |
 | `check_interval`      | `10s`                                   | active server check                                    |

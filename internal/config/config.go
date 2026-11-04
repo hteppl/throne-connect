@@ -96,7 +96,7 @@ func Default() Config {
 		APIListen:      "127.0.0.1:10809",
 		XrayLogLevel:   "warning",
 		BasePort:       21000,
-		DNS:            []string{"https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query", "https+local://77.88.8.8/dns-query"},
+		DNS:            []string{"https+local://1.1.1.1/dns-query", "https+local://8.8.8.8/dns-query", "https+local://9.9.9.9/dns-query"},
 		TestURL:        "http://cp.cloudflare.com/generate_204",
 		Timeout:        Duration{5 * time.Second},
 		CheckInterval:  Duration{10 * time.Second},

@@ -1,0 +1,17 @@
+[Unit]
+Description=throne-connect failover VPN node (built-in TUN)
+After=network-online.target
+Wants=network-online.target
+# Never give up restarting.
+StartLimitIntervalSec=0
+
+[Service]
+# System unit: the built-in TUN needs root (CAP_NET_ADMIN) to create the
+# interface and manage routes. Point -c at a config with "tun": {"enabled": true}.
+ExecStart=/usr/local/bin/throne-connect run -c /etc/throne-connect/config.json
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

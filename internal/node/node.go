@@ -20,6 +20,7 @@ import (
 	"throne-connect/internal/config"
 	"throne-connect/internal/logbuf"
 	"throne-connect/internal/source"
+	"throne-connect/internal/tun"
 	"throne-connect/internal/xray"
 )
 
@@ -158,6 +159,24 @@ func (n *Node) Run(ctx context.Context) error {
 	go n.serve(runCtx, ln)
 	n.log.Info("node started", "listen", n.cfg.Listen, "servers", len(n.backends))
 
+	if n.cfg.TUN.Enabled {
+		tn, err := tun.Start(runCtx, tun.Options{
+			Name:      n.cfg.TUN.Name,
+			Address:   n.cfg.TUN.Address,
+			MTU:       n.cfg.TUN.MTU,
+			SocksAddr: socksDialAddr(n.cfg.Listen),
+			FWMark:    n.cfg.TUN.FWMark,
+			Table:     n.cfg.TUN.Table,
+			DNS:       n.cfg.TUN.DNS,
+			Exclude:   n.cfg.TUN.Exclude,
+			LogLevel:  n.cfg.XrayLogLevel,
+		}, n.log)
+		if err != nil {
+			return fmt.Errorf("tun: %w", err)
+		}
+		defer tn.Close()
+	}
+
 	if n.cfg.APIListen != "" {
 		if err := n.startAPI(runCtx); err != nil {
 			n.log.Warn("API not started", "err", err)
@@ -209,11 +228,29 @@ func (n *Node) waitXray(ctx context.Context) error {
 	return xray.WaitReady(ctx, addr, 15*time.Second)
 }
 
+// socksDialAddr turns the SOCKS listen address into one the local TUN can dial:
+// a wildcard host (0.0.0.0, ::, empty) becomes loopback.
+func socksDialAddr(listen string) string {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return listen
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
+}
+
 // apply installs a new server list: builds and validates the xray config, then
 // swaps in fresh backends, carrying over health history by server key.
 func (n *Node) apply(servers []source.Server, initial bool) error {
+	mark := 0
+	if n.cfg.TUN.Enabled {
+		mark = n.cfg.TUN.FWMark
+	}
 	build := func(s []source.Server) ([]byte, error) {
-		return xray.BuildConfig(s, n.cfg.BasePort, n.cfg.DNS, n.cfg.XrayLogLevel)
+		return xray.BuildConfig(s, n.cfg.BasePort, n.cfg.DNS, n.cfg.XrayLogLevel, mark)
 	}
 	cfg, err := build(servers)
 	if err == nil {

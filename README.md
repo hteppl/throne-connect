@@ -23,6 +23,9 @@ apps → Throne (TUN) → socks5://127.0.0.1:10808 → throne-connect
                                          NL  DE  FI  US …
 ```
 
+On Linux it can also bring up the TUN itself instead of Throne, so only xray profiles still come
+from Throne — see [Built-in VPN (TUN)](#built-in-vpn-tun).
+
 ## How failover works
 
 - The active server is checked every `check_interval` (10s) by fetching `test_url` through it.
@@ -124,7 +127,11 @@ docker compose exec throne-connect throne-connect status -c /etc/throne-connect/
 - Docker Desktop on Windows is not supported together with Throne on the same PC: the container
   runs in a VM and Throne cannot tell its traffic apart. Use the native `.exe` there.
 
-## Throne setup (once, required)
+## Throne setup (once)
+
+This is the default setup, where Throne provides the TUN and routing and sends its traffic to
+the node over SOCKS. If you use the [built-in TUN](#built-in-vpn-tun) instead, skip steps 1–3 —
+Throne then only needs to keep `throne.db` up to date.
 
 1. **Route xray around the VPN.** Otherwise xray's connections to the servers go back into the
    TUN and form a loop. Open Routes → profile `Default` → add a rule
@@ -135,6 +142,62 @@ docker compose exec throne-connect throne-connect status -c /etc/throne-connect/
 3. Select that profile as active. TUN mode stays on as before.
 
 The SOCKS profile itself is not picked up by throne-connect: only xray profiles are used.
+
+## Built-in VPN (TUN)
+
+By default throne-connect only exposes a SOCKS port and relies on Throne for the TUN, routing
+and DNS (the diagram at the top). It can also **handle the tunnel itself**: with the TUN turned
+on it brings up a `tun` device and routes all traffic through the active server, so Throne is no
+longer needed *for the tunnel*.
+
+```
+apps → throne-connect (TUN) → active server     # Throne not needed for the tunnel
+```
+
+Throne is still the **source of servers**: the list is read from `throne.db`, which Throne
+fills and refreshes from your subscription. throne-connect does not parse subscriptions itself,
+so Throne stays installed to keep that database up to date — it just no longer carries traffic.
+
+Enable it in the config (Linux only; needs root / `CAP_NET_ADMIN`):
+
+```json
+{
+  "tun": {
+    "enabled": true,
+    "dns": "1.1.1.1"
+  }
+}
+```
+
+Then run the node as root (`sudo throne-connect run`, or the systemd **system** unit). All host
+traffic now goes through the active server and fails over with it.
+
+- xray's own connections to the VPN servers are tagged with a firewall mark (`fwmark`) and sent
+  out through a dedicated routing table, so they bypass the tunnel instead of looping back into
+  it. **No Throne `process_name xray → direct` rule is needed** — the node sets this up itself.
+- Private networks (LAN, Docker, etc.) stay direct; add more with `tun.exclude`.
+- `tun.dns` points the system resolver at the given server while the tunnel is up (so DNS goes
+  through the VPN) and restores `/etc/resolv.conf` on shutdown. Leave it empty to keep the
+  system's own DNS. The stack is IPv4-only.
+- On shutdown the routes and the interface are removed, so a clean stop leaves the host as it was.
+
+For autostart as root use [`deploy/throne-connect-tun.service`](deploy/throne-connect-tun.service)
+(a systemd **system** unit). In Docker, add `cap_add: [NET_ADMIN]` and `devices: [/dev/net/tun]`
+to the service.
+
+| `tun` field | default        | meaning                                                      |
+|-------------|----------------|--------------------------------------------------------------|
+| `enabled`   | `false`        | turn the built-in tunnel on                                  |
+| `name`      | `throne0`      | TUN interface name                                           |
+| `address`   | `198.18.0.1/30`| interface address (a small unused range)                     |
+| `mtu`       | `1500`         | interface MTU                                                 |
+| `fwmark`    | `1987`         | mark set on xray's sockets so its traffic bypasses the tunnel|
+| `table`     | `1987`         | routing table id for the bypass route                        |
+| `dns`       | —              | system resolver to use while the tunnel is up                |
+| `exclude`   | —              | extra destination CIDRs to keep off the tunnel               |
+
+Other platforms are not supported yet: on them an enabled TUN exits with an error, so keep using
+Throne's TUN with the SOCKS setup above.
 
 ## TUI
 
@@ -215,6 +278,7 @@ File: `./throne-connect.json` or `~/.config/throne-connect/config.json`
 | `switch_better_ms`    | `0`                                     | move to a faster server (0 = never)                    |
 | `min_dwell`           | `5m`                                    | minimum time on a server before moving to a faster one |
 | `drop_on_failover`    | `true`                                  | close connections of the failed server                 |
+| `tun`                 | off                                     | built-in system VPN, see [Built-in VPN (TUN)](#built-in-vpn-tun) |
 
 Worst-case failure detection: `check_interval × fail_threshold + timeout` ≈ 25s.
 For faster reaction set e.g. `check_interval: "5s"`, `timeout: "4s"` for roughly 14s.

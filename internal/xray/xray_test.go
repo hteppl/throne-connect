@@ -117,7 +117,7 @@ func TestBuildConfig(t *testing.T) {
 		server("a", `{"protocol":"vless","tag":"orig"}`),
 		server("b", `{"protocol":"trojan","streamSettings":{"network":"ws","sockopt":{"domainStrategy":"UseIP","mark":1}}}`),
 	}
-	data, err := BuildConfig(servers, 10800, []string{"1.1.1.1"}, "debug")
+	data, err := BuildConfig(servers, 10800, []string{"1.1.1.1"}, "debug", 1987)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,10 +157,11 @@ func TestBuildConfig(t *testing.T) {
 		t.Fatalf("outbounds: %+v", cfg.Outbounds)
 	}
 	a, b := cfg.Outbounds[1], cfg.Outbounds[2]
-	if a.Tag != "srv-0" || a.Protocol != "vless" || a.StreamSettings.Sockopt["domainStrategy"] != "UseIPv4" {
+	if a.Tag != "srv-0" || a.Protocol != "vless" || a.StreamSettings.Sockopt["domainStrategy"] != "UseIPv4" || a.StreamSettings.Sockopt["mark"] != 1987.0 {
 		t.Fatalf("outbound a: %+v", a)
 	}
-	if b.Tag != "srv-1" || b.StreamSettings.Network != "ws" || b.StreamSettings.Sockopt["domainStrategy"] != "UseIP" || b.StreamSettings.Sockopt["mark"] != 1.0 {
+	// b keeps its own domainStrategy but our fwmark overrides any existing one.
+	if b.Tag != "srv-1" || b.StreamSettings.Network != "ws" || b.StreamSettings.Sockopt["domainStrategy"] != "UseIP" || b.StreamSettings.Sockopt["mark"] != 1987.0 {
 		t.Fatalf("outbound b kept its settings: %+v", b)
 	}
 	rules := cfg.Routing.Rules
@@ -170,7 +171,7 @@ func TestBuildConfig(t *testing.T) {
 }
 
 func TestBuildConfigBadOutbound(t *testing.T) {
-	_, err := BuildConfig([]source.Server{server("broken", `{`)}, 1, nil, "warning")
+	_, err := BuildConfig([]source.Server{server("broken", `{`)}, 1, nil, "warning", 0)
 	if err == nil || !strings.Contains(err.Error(), `"broken"`) {
 		t.Fatalf("err = %v", err)
 	}

@@ -18,7 +18,13 @@ func OutboundTag(i int) string { return fmt.Sprintf("srv-%d", i) }
 // policy route can keep xray's traffic to the servers off the tunnel.
 func BuildConfig(servers []source.Server, basePort int, dns []string, logLevel string, mark int) ([]byte, error) {
 	inbounds := make([]any, 0, len(servers))
-	outbounds := []any{map[string]any{"protocol": "freedom", "tag": "direct"}}
+	// The direct outbound carries xray's own DNS. Mark it too, or with the TUN up
+	// those queries would loop back into the tunnel and no server would resolve.
+	direct := map[string]any{"protocol": "freedom", "tag": "direct"}
+	if mark > 0 {
+		direct["streamSettings"] = map[string]any{"sockopt": map[string]any{"mark": mark}}
+	}
+	outbounds := []any{direct}
 	rules := []any{map[string]any{"type": "field", "inboundTag": []string{"dns-internal"}, "outboundTag": "direct"}}
 
 	for i, s := range servers {

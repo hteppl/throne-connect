@@ -39,6 +39,7 @@ type Status struct {
 	ActiveSince  string         `json:"active_since"`
 	Pinned       bool           `json:"pinned"`
 	Degraded     bool           `json:"degraded"`
+	TUN          bool           `json:"tun"` // the built-in tunnel is up
 	Switches     int            `json:"switches"`
 	LastSwitch   string         `json:"last_switch,omitempty"`
 	XrayRestarts int64          `json:"xray_restarts"`
@@ -58,6 +59,7 @@ func (n *Node) Status(context.Context) (Status, error) {
 		Active:       nameOf(a),
 		Pinned:       n.pinned,
 		Degraded:     n.degraded,
+		TUN:          n.tunnel != nil,
 		Switches:     n.failovers,
 		LastSwitch:   n.lastSwitch,
 		XrayRestarts: n.runner.Restarts.Load(),
@@ -171,6 +173,19 @@ func (n *Node) startAPI(ctx context.Context) error {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"active": active})
+	})
+	mux.HandleFunc("POST /tun", func(w http.ResponseWriter, r *http.Request) {
+		on, err := strconv.ParseBool(r.URL.Query().Get("on"))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing ?on=true|false"})
+			return
+		}
+		state, err := n.SetTUN(r.Context(), on)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"tun": state})
 	})
 	for path, off := range map[string]bool{"POST /disable": true, "POST /enable": false} {
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {

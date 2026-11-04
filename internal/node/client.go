@@ -74,6 +74,14 @@ func (c *Client) SetDisabled(ctx context.Context, target string, off bool) (stri
 	return m.Server, nil
 }
 
+func (c *Client) SetTUN(ctx context.Context, on bool) (bool, error) {
+	var m struct{ TUN bool }
+	if err := c.do(ctx, http.MethodPost, "/tun?on="+strconv.FormatBool(on), &m); err != nil {
+		return false, err
+	}
+	return m.TUN, nil
+}
+
 func (c *Client) Logs(ctx context.Context, after uint64) ([]logbuf.Line, uint64, error) {
 	var r LogsResponse
 	if err := c.do(ctx, http.MethodGet, "/logs?after="+strconv.FormatUint(after, 10), &r); err != nil {

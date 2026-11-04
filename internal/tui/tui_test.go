@@ -24,6 +24,7 @@ type fakeClient struct {
 	switchErr error
 	toggleErr error
 	toggled   []string // "+key" for enable, "-key" for disable
+	tunErr    error
 	logsErr   error
 	lines     []logbuf.Line
 	logNext   uint64
@@ -62,6 +63,14 @@ func (f *fakeClient) SetDisabled(_ context.Context, target string, off bool) (st
 	return "", errors.New("not found")
 }
 
+func (f *fakeClient) SetTUN(_ context.Context, on bool) (bool, error) {
+	if f.tunErr != nil {
+		return f.st.TUN, f.tunErr
+	}
+	f.st.TUN = on
+	return f.st.TUN, nil
+}
+
 func (f *fakeClient) Logs(context.Context, uint64) ([]logbuf.Line, uint64, error) {
 	if f.logsErr != nil {
 		return nil, 0, f.logsErr
@@ -96,7 +105,7 @@ func send(t *testing.T, m tea.Model, msgs ...tea.Msg) tea.Model {
 		if cmd != nil {
 			if out := cmd(); out != nil {
 				switch out.(type) {
-				case pollMsg, switchedMsg, toggledMsg:
+				case pollMsg, switchedMsg, toggledMsg, tunToggledMsg:
 					m = send(t, m, out)
 				}
 			}
@@ -158,6 +167,25 @@ func TestSelectAndSwitch(t *testing.T) {
 	rows := m.(model).rows()
 	if rows[len(rows)-1].Healthy {
 		t.Fatalf("score sort must put servers without a score last")
+	}
+}
+
+func TestToggleTUN(t *testing.T) {
+	c := &fakeClient{st: fakeStatus(3)}
+	var m tea.Model = newModel(c, Options{Source: "test"})
+	m = send(t, m, tea.WindowSizeMsg{Width: 100, Height: 30}, poll(c, 0)())
+
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if !c.st.TUN {
+		t.Fatal("pressing t did not turn the TUN on")
+	}
+	if v := ansi.Strip(checkView(t, m, 100, 30)); !strings.Contains(v, "TUN on") {
+		t.Fatalf("header does not show TUN on:\n%s", v)
+	}
+
+	m = send(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("t")})
+	if c.st.TUN {
+		t.Fatal("pressing t again did not turn the TUN off")
 	}
 }
 

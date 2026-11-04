@@ -170,22 +170,22 @@ func (c *Config) validate() error {
 	case c.Timeout.Duration <= 0 || c.CheckInterval.Duration <= 0 || c.ScanInterval.Duration <= 0 || c.ReloadInterval.Duration <= 0:
 		return errors.New("timeout and intervals must be positive")
 	}
-	if c.TUN.Enabled {
-		if c.TUN.Name == "" {
-			c.TUN.Name = "throne0"
-		}
-		if c.TUN.Address == "" {
-			c.TUN.Address = "198.18.0.1/30"
-		}
-		if c.TUN.MTU <= 0 {
-			c.TUN.MTU = 1500
-		}
-		if c.TUN.FWMark <= 0 {
-			c.TUN.FWMark = 1987
-		}
-		if c.TUN.Table <= 0 {
-			c.TUN.Table = 1987
-		}
+	// Fill TUN defaults even when disabled: the fwmark is always set on xray's
+	// sockets, so the tunnel can be toggled at runtime without restarting xray.
+	if c.TUN.Name == "" {
+		c.TUN.Name = "throne0"
+	}
+	if c.TUN.Address == "" {
+		c.TUN.Address = "198.18.0.1/30"
+	}
+	if c.TUN.MTU <= 0 {
+		c.TUN.MTU = 1500
+	}
+	if c.TUN.FWMark <= 0 {
+		c.TUN.FWMark = 1987
+	}
+	if c.TUN.Table <= 0 {
+		c.TUN.Table = 1987
 	}
 	return nil
 }

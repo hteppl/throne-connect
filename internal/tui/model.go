@@ -200,6 +200,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.polling = true
 		return m, poll(m.c, m.logNext)
 
+	case tunToggledMsg:
+		switch {
+		case msg.err != nil:
+			m.setMsg("TUN: "+msg.err.Error(), true)
+		case msg.on:
+			m.setMsg("TUN on: all traffic goes through the active server", false)
+		default:
+			m.setMsg("TUN off", false)
+		}
+		m.polling = true
+		return m, poll(m.c, m.logNext)
+
 	case nodeExitedMsg:
 		m.nodeDone, m.nodeErr = true, msg.err
 		m.switching = ""
@@ -312,6 +324,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.switchSelected(rows, cur)
 	case "d":
 		return m.toggleSelected(rows, cur)
+	case "t":
+		return m.toggleTUN()
 	case "/":
 		m.filtering = true
 	case "esc":
@@ -382,6 +396,20 @@ func (m model) toggleSelected(rows []node.ServerStatus, cur int) (tea.Model, tea
 		m.setMsg("Disabling "+s.Name+"…", false)
 	}
 	return m, toggleCmd(m.c, s.Key, s.Name, !s.Disabled)
+}
+
+func (m model) toggleTUN() (tea.Model, tea.Cmd) {
+	if m.nodeDone {
+		m.setMsg("The node is not running.", true)
+		return m, nil
+	}
+	on := !m.st.TUN
+	if on {
+		m.setMsg("Enabling TUN…", false)
+	} else {
+		m.setMsg("Disabling TUN…", false)
+	}
+	return m, tunToggleCmd(m.c, on)
 }
 
 func (m model) quit() (tea.Model, tea.Cmd) {

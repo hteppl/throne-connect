@@ -43,6 +43,9 @@ type Node struct {
 
 	active atomic.Pointer[backend]
 	reqCh  chan request
+
+	runCtx context.Context // the Run lifetime, used to start the tunnel on demand
+	tunnel tun.Tunnel      // the built-in TUN while it is up (nil = off); guarded by mu
 }
 
 // request is a manual action (switch, enable, disable) run by the Run loop, so it
@@ -130,6 +133,7 @@ func (n *Node) Run(ctx context.Context) error {
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	n.runCtx = runCtx
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() { defer wg.Done(); n.runner.Run(runCtx) }()
@@ -160,22 +164,11 @@ func (n *Node) Run(ctx context.Context) error {
 	n.log.Info("node started", "listen", n.cfg.Listen, "servers", len(n.backends))
 
 	if n.cfg.TUN.Enabled {
-		tn, err := tun.Start(runCtx, tun.Options{
-			Name:      n.cfg.TUN.Name,
-			Address:   n.cfg.TUN.Address,
-			MTU:       n.cfg.TUN.MTU,
-			SocksAddr: socksDialAddr(n.cfg.Listen),
-			FWMark:    n.cfg.TUN.FWMark,
-			Table:     n.cfg.TUN.Table,
-			DNS:       n.cfg.TUN.DNS,
-			Exclude:   n.cfg.TUN.Exclude,
-			LogLevel:  n.cfg.XrayLogLevel,
-		}, n.log)
-		if err != nil {
+		if err := n.enableTunnel(); err != nil {
 			return fmt.Errorf("tun: %w", err)
 		}
-		defer tn.Close()
 	}
+	defer n.disableTunnel()
 
 	if n.cfg.APIListen != "" {
 		if err := n.startAPI(runCtx); err != nil {
@@ -242,15 +235,71 @@ func socksDialAddr(listen string) string {
 	return net.JoinHostPort(host, port)
 }
 
+func (n *Node) tunOptions() tun.Options {
+	return tun.Options{
+		Name:      n.cfg.TUN.Name,
+		Address:   n.cfg.TUN.Address,
+		MTU:       n.cfg.TUN.MTU,
+		SocksAddr: socksDialAddr(n.cfg.Listen),
+		FWMark:    n.cfg.TUN.FWMark,
+		Table:     n.cfg.TUN.Table,
+		DNS:       n.cfg.TUN.DNS,
+		Exclude:   n.cfg.TUN.Exclude,
+		LogLevel:  n.cfg.XrayLogLevel,
+	}
+}
+
+// tunUp reports whether the built-in TUN is currently up.
+func (n *Node) tunUp() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.tunnel != nil
+}
+
+func (n *Node) enableTunnel() error {
+	if n.tunUp() {
+		return nil
+	}
+	t, err := tun.Start(n.runCtx, n.tunOptions(), n.log)
+	if err != nil {
+		return err
+	}
+	n.mu.Lock()
+	n.tunnel = t
+	n.mu.Unlock()
+	return nil
+}
+
+func (n *Node) disableTunnel() {
+	n.mu.Lock()
+	t := n.tunnel
+	n.tunnel = nil
+	n.mu.Unlock()
+	if t != nil {
+		t.Close()
+	}
+}
+
+// SetTUN turns the built-in TUN on or off at runtime and returns the new state.
+// Enabling it needs root / CAP_NET_ADMIN; the error says so when it is missing.
+func (n *Node) SetTUN(ctx context.Context, on bool) (bool, error) {
+	err := n.do(ctx, func(context.Context) error {
+		if on {
+			return n.enableTunnel()
+		}
+		n.disableTunnel()
+		return nil
+	})
+	return n.tunUp(), err
+}
+
 // apply installs a new server list: builds and validates the xray config, then
 // swaps in fresh backends, carrying over health history by server key.
 func (n *Node) apply(servers []source.Server, initial bool) error {
-	mark := 0
-	if n.cfg.TUN.Enabled {
-		mark = n.cfg.TUN.FWMark
-	}
+	// Always mark xray's sockets so the TUN can be toggled at runtime without
+	// rebuilding the config; the mark is inert until the tunnel installs its rule.
 	build := func(s []source.Server) ([]byte, error) {
-		return xray.BuildConfig(s, n.cfg.BasePort, n.cfg.DNS, n.cfg.XrayLogLevel, mark)
+		return xray.BuildConfig(s, n.cfg.BasePort, n.cfg.DNS, n.cfg.XrayLogLevel, n.cfg.TUN.FWMark)
 	}
 	cfg, err := build(servers)
 	if err == nil {

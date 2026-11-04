@@ -126,6 +126,7 @@ func (m model) viewHeader() []string {
 	}
 
 	info := dimStyle.Render("Listen  ") + "socks5://" + m.st.Listen +
+		dimStyle.Render("   TUN ") + tunLabel(m.st.TUN) +
 		dimStyle.Render("   Uptime ") + m.st.Uptime +
 		dimStyle.Render("   Switches ") + strconv.Itoa(m.st.Switches) +
 		dimStyle.Render("   xray restarts ") + strconv.FormatInt(m.st.XrayRestarts, 10)
@@ -137,6 +138,13 @@ func (m model) viewHeader() []string {
 		last += dimStyle.Render("no switches yet")
 	}
 	return []string{title, active, info, last, ""}
+}
+
+func tunLabel(on bool) string {
+	if on {
+		return accentStyle.Bold(true).Render("on")
+	}
+	return dimStyle.Render("off")
 }
 
 func pingStyle(ms int) lipgloss.Style {
@@ -336,7 +344,7 @@ func (m model) viewMessage() string {
 
 func (m model) viewKeys() string {
 	keys := [][2]string{
-		{"↑↓", "select"}, {"enter", "switch"}, {"d", "disable"}, {"a", "active"}, {"/", "filter"},
+		{"↑↓", "select"}, {"enter", "switch"}, {"d", "disable"}, {"t", "tun"}, {"a", "active"}, {"/", "filter"},
 		{"s", "sort"}, {"l", "log"}, {"?", "help"}, {"q", "quit"},
 	}
 	if m.showHelp {
@@ -357,6 +365,7 @@ func helpLines() []string {
 		key("PgUp PgDn", "page up / down;  Home End (g G) jump to the first / last server"),
 		key("Enter  Space", "switch to the selected server; it is checked first, then pinned"),
 		key("d", "disable / enable the selected server: a disabled one is not checked or used"),
+		key("t", "turn the built-in TUN on / off (Linux, needs root; routes all traffic through the VPN)"),
 		key("a", "jump to the active server"),
 		key("/", "filter by name or group;  Esc clears the filter"),
 		key("s", "sort by #, score or name"),

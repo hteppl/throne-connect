@@ -19,6 +19,7 @@ type Client interface {
 	Status(ctx context.Context) (node.Status, error)
 	Switch(ctx context.Context, target string) (string, error)
 	SetDisabled(ctx context.Context, target string, off bool) (string, error)
+	SetTUN(ctx context.Context, on bool) (bool, error)
 	Logs(ctx context.Context, after uint64) ([]logbuf.Line, uint64, error)
 }
 
@@ -80,6 +81,12 @@ type toggledMsg struct {
 	err  error
 }
 
+type tunToggledMsg struct {
+	on   bool // the resulting state
+	want bool // what was requested
+	err  error
+}
+
 type nodeExitedMsg struct{ err error }
 
 func tick() tea.Cmd {
@@ -119,5 +126,14 @@ func toggleCmd(c Client, key, name string, off bool) tea.Cmd {
 		defer cancel()
 		_, err := c.SetDisabled(ctx, key, off)
 		return toggledMsg{name: name, off: off, err: err}
+	}
+}
+
+func tunToggleCmd(c Client, on bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		state, err := c.SetTUN(ctx, on)
+		return tunToggledMsg{on: state, want: on, err: err}
 	}
 }

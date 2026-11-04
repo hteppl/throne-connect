@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xjasonlyu/tun2socks/v2/engine"
@@ -30,8 +31,8 @@ type linuxTunnel struct {
 // Start brings up the TUN device, points the default route at it and installs a
 // policy route so xray's own (fwmark-tagged) traffic to the servers bypasses it.
 func Start(_ context.Context, opts Options, log *slog.Logger) (Tunnel, error) {
-	if os.Geteuid() != 0 {
-		return nil, fmt.Errorf("the built-in TUN needs root (or CAP_NET_ADMIN); run as root")
+	if !hasNetAdmin() {
+		return nil, fmt.Errorf("the built-in TUN needs CAP_NET_ADMIN: run as root, or `setcap cap_net_admin,cap_net_raw+ep` on the binary")
 	}
 	if _, err := os.Stat("/dev/net/tun"); err != nil {
 		return nil, fmt.Errorf("/dev/net/tun is missing (load the tun module): %w", err)
@@ -206,6 +207,28 @@ func setResolv(dns string) error {
 func restoreResolv() {
 	os.Remove(resolvConf)
 	os.Rename(bakResolv, resolvConf)
+}
+
+// hasNetAdmin reports whether the process can manage the network: root, or a
+// CAP_NET_ADMIN in its effective set (e.g. via setcap on the binary).
+func hasNetAdmin() bool {
+	if os.Geteuid() == 0 {
+		return true
+	}
+	data, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if v, ok := strings.CutPrefix(line, "CapEff:"); ok {
+			caps, err := strconv.ParseUint(strings.TrimSpace(v), 16, 64)
+			if err != nil {
+				return false
+			}
+			return caps&(1<<12) != 0 // CAP_NET_ADMIN
+		}
+	}
+	return false
 }
 
 func logLevel(level string) string {

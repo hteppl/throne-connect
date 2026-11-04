@@ -172,6 +172,10 @@ Enable it in the config (Linux only; needs root / `CAP_NET_ADMIN`):
 Then run the node as root (`sudo throne-connect run`, or the systemd **system** unit). All host
 traffic now goes through the active server and fails over with it.
 
+`tun.enabled` is only the startup default. You can turn the tunnel on and off at runtime without
+restarting: press `t` in the TUI, run `throne-connect tun on|off`, or `POST /tun?on=true|false`.
+The TUI header shows the current `TUN on` / `TUN off` state. (Turning it on still needs root.)
+
 - xray's own connections to the VPN servers are tagged with a firewall mark (`fwmark`) and sent
   out through a dedicated routing table, so they bypass the tunnel instead of looping back into
   it. **No Throne `process_name xray → direct` rule is needed** — the node sets this up itself.
@@ -222,6 +226,7 @@ it, `throne-connect` is the whole program in one window.
 | `PgUp` `PgDn`, `Home` `End` (`g` `G`) | page, jump to the first / last                             |
 | `Enter` / `Space`                     | switch to the selected server (checked first, then pinned) |
 | `d`                                   | disable / enable the selected server                       |
+| `t`                                   | turn the built-in TUN on / off (Linux, needs root)         |
 | `a`                                   | jump to the active server                                  |
 | `/`                                   | filter by name or group; `Esc` clears it                   |
 | `s`                                   | sort by #, score or name                                   |
@@ -245,6 +250,7 @@ throne-connect switch 4         switch manually (number from status or part of t
                                 a manual choice is kept for as long as that server works
 throne-connect disable 4        stop checking and using a server (kept across restarts)
 throne-connect enable 4         use a disabled server again (it is checked right away)
+throne-connect tun on|off       turn the built-in TUN on or off (Linux, needs root)
 throne-connect list             servers found in throne.db
 throne-connect init             create a config file
 -c <file>                       use another config file;  -v  verbose logging
@@ -252,7 +258,7 @@ throne-connect init             create a config file
 
 API for your own scripts: `GET http://127.0.0.1:10809/status`, `POST /switch?to=<N|name>`,
 `POST /disable?server=<N|name>`, `POST /enable?server=<N|name>`,
-`GET /logs?after=<seq>` (recent log lines, used by the TUI).
+`POST /tun?on=true|false`, `GET /logs?after=<seq>` (recent log lines, used by the TUI).
 
 ## Configuration
 

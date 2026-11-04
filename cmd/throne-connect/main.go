@@ -43,6 +43,7 @@ Usage:
   throne-connect disable <N|name>
                                  stop checking and using a server (kept across restarts)
   throne-connect enable <N|name> use a disabled server again
+  throne-connect tun on|off      turn the built-in TUN on or off (Linux, needs root)
   throne-connect list            list servers found in throne.db
   throne-connect init            create a config file
   throne-connect version
@@ -125,6 +126,11 @@ func main() {
 			exit(errors.New("specify a server: its number from `status` or part of its name"))
 		}
 		exit(setDisabled(cfg, fset.Arg(0), cmd == "disable"))
+	case "tun":
+		if fset.NArg() != 1 {
+			exit(errors.New("specify on or off"))
+		}
+		exit(setTUN(cfg, fset.Arg(0)))
 	default:
 		fset.Usage()
 		os.Exit(2)
@@ -291,8 +297,12 @@ func status(cfg config.Config) error {
 	if st.Pinned {
 		pin = " (pinned manually)"
 	}
-	fmt.Printf("State:       %s\nActive:      %s%s, since %s\nListen:      socks5://%s\nUptime:      %s, switches: %d, xray restarts: %d\n",
-		state, st.Active, pin, st.ActiveSince, st.Listen, st.Uptime, st.Switches, st.XrayRestarts)
+	tunState := "off"
+	if st.TUN {
+		tunState = "on"
+	}
+	fmt.Printf("State:       %s\nActive:      %s%s, since %s\nListen:      socks5://%s  (TUN %s)\nUptime:      %s, switches: %d, xray restarts: %d\n",
+		state, st.Active, pin, st.ActiveSince, st.Listen, tunState, st.Uptime, st.Switches, st.XrayRestarts)
 	if st.LastSwitch != "" {
 		fmt.Printf("Last switch: %s\n", st.LastSwitch)
 	}
@@ -331,6 +341,34 @@ func switchTo(cfg config.Config, target string) error {
 		return err
 	}
 	fmt.Println("active server:", active)
+	return nil
+}
+
+func setTUN(cfg config.Config, arg string) error {
+	var on bool
+	switch strings.ToLower(arg) {
+	case "on", "true", "1", "enable":
+		on = true
+	case "off", "false", "0", "disable":
+		on = false
+	default:
+		return fmt.Errorf("expected on or off, got %q", arg)
+	}
+	c, err := apiClient(cfg)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	state, err := c.SetTUN(ctx, on)
+	if err != nil {
+		return err
+	}
+	if state {
+		fmt.Println("TUN: on")
+	} else {
+		fmt.Println("TUN: off")
+	}
 	return nil
 }
 
